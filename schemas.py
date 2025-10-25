@@ -24,3 +24,38 @@ class ReviseAnswer(AnswerQuestion):
     references: List[str] = Field(
         description="Citations motivating your updated answer."
     )
+
+
+class ReflectionSummary(BaseModel):
+    """Structured summary of the agent's self-reflection."""
+
+    highlights: List[str] = Field(
+        description="Key strengths or validated insights uncovered in the latest answer.",
+        min_items=1,
+    )
+    risks: List[str] = Field(
+        description="Issues, gaps, or uncertainties that still need attention.",
+        min_items=1,
+    )
+    next_focus: str = Field(
+        description="One concise directive the agent should prioritize in the next iteration."
+    )
+    confidence: float = Field(
+        description="Confidence score between 0 and 1 describing how close the draft is to final.",
+        ge=0.0,
+        le=1.0,
+    )
+
+
+class ContinuationDecision(BaseModel):
+    """Decision on whether to continue iterating on the answer."""
+
+    should_continue: bool = Field(
+        description="True when the agent ought to run another improvement iteration."
+    )
+    reason: str = Field(
+        description="Rationale that justifies the decision in natural language."
+    )
+    next_focus: str = Field(
+        description="Focus statement the agent should follow if another iteration occurs."
+    )
