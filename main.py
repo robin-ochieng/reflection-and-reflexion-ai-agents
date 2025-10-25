@@ -1,118 +1,37 @@
-from typing import List, TypedDict
+from typing import List
 
-from dotenv import load_dotenv
-from langchain_core.messages import AIMessage, BaseMessage, HumanMessage
-from langgraph.graph import END, START, StateGraph
+from langchain_core.messages import BaseMessage, ToolMessage
+from langgraph.graph import END, MessageGraph
 
-from chains import generation_chain, reflection_chain
+from chains import revisor, first_responder
+from tool_executor import execute_tools
 
-
-class AgentState(TypedDict):
-    conversation: List[BaseMessage]
-    reflections: List[BaseMessage]
-    objective: str
-    audience: str
-    tone: str
-    turn: int
-    max_turns: int
+MAX_ITERATIONS = 2
+builder = MessageGraph()
+builder.add_node("draft", first_responder)
+builder.add_node("execute_tools", execute_tools)
+builder.add_node("revise", revisor)
+builder.add_edge("draft", "execute_tools")
+builder.add_edge("execute_tools", "revise")
 
 
-def generate(state: AgentState) -> AgentState:
-    response = generation_chain.invoke(
-        {
-            "objective": state["objective"],
-            "audience": state["audience"],
-            "tone": state["tone"],
-            "conversation": state["conversation"],
-            "reflections": state["reflections"],
-        }
-    )
-
-    return {
-        **state,
-        "conversation": [*state["conversation"], AIMessage(content=response)],
-        "turn": state["turn"] + 1,
-    }
+def event_loop(state: List[BaseMessage]) -> str:
+    count_tool_visits = sum(isinstance(item, ToolMessage) for item in state)
+    num_iterations = count_tool_visits
+    if num_iterations > MAX_ITERATIONS:
+        return END
+    return "execute_tools"
 
 
-def reflect(state: AgentState) -> AgentState:
-    reflection = reflection_chain.invoke(
-        {
-            "objective": state["objective"],
-            "conversation": state["conversation"],
-        }
-    )
+builder.add_conditional_edges("revise", event_loop, {END:END, "execute_tools":"execute_tools"})
+builder.set_entry_point("draft")
+graph = builder.compile()
 
-    return {
-        **state,
-        "reflections": [*state["reflections"], AIMessage(content=reflection)],
-    }
+print(graph.get_graph().draw_mermaid())
 
 
-def route_should_continue(state: AgentState) -> str:
-    if state["turn"] >= state["max_turns"]:
-        return "end"
-    if not state["reflections"]:
-        return "reflect"
-    return "end"
-
-
-def build_graph() -> StateGraph[AgentState]:
-    # Encodes the loop: start -> generate -> should_continue -> reflect -> generate/end.
-    workflow: StateGraph[AgentState] = StateGraph(AgentState)
-    workflow.add_node("generate", generate)
-    workflow.add_node("should_continue", lambda state: state)
-    workflow.add_node("reflect", reflect)
-
-    workflow.add_edge(START, "generate")
-    workflow.add_edge("generate", "should_continue")
-    workflow.add_conditional_edges(
-        "should_continue",
-        route_should_continue,
-        {
-            "reflect": "reflect",
-            "end": END,
-        },
-    )
-    workflow.add_edge("reflect", "generate")
-
-    return workflow
-
-
-def main() -> None:
-    load_dotenv()
-
-    graph = build_graph()
-    app = graph.compile()
-
-    initial_state: AgentState = {
-        "conversation": [
-            HumanMessage(
-                content="We need a launch plan for the reflection agent project that inspires the team."
-            )
-        ],
-        "reflections": [],
-        "objective": "Deliver the next assistant update about the reflection agent launch plan.",
-        "audience": "core product team",
-        "tone": "motivational",
-        "turn": 0,
-        "max_turns": 3,
-    }
-
-    final_state = app.invoke(initial_state)
-
-    final_message = final_state["conversation"][-1].content
-    print("Final assistant message:\n")
-    print(final_message)
-
-    if final_state["reflections"]:
-        print("\nCaptured reflections:\n")
-        for idx, reflection in enumerate(final_state["reflections"], start=1):
-            print(f"Reflection {idx}: {reflection.content}\n")
-
-    print("Mermaid workflow diagram:\n")
-    print(f"```mermaid\n{app.get_graph().draw_mermaid()}\n```")
-
-
-if __name__ == "__main__":
-    main()
+res = graph.invoke(
+    "Write about AI-Powered SOC / autonomous soc  problem domain, list startups that do that and raised capital."
+)
+print(res[-1].tool_calls[0]["args"]["answer"])
+print(res)

@@ -1,70 +1,74 @@
-"""Shared prompt and chain utilities for the LangGraph application."""
+import datetime
 
 from dotenv import load_dotenv
-from langchain_core.output_parsers import StrOutputParser
+
+load_dotenv()
+
+from langchain_core.messages import HumanMessage
+from langchain_core.output_parsers.openai_tools import (
+    JsonOutputToolsParser,
+    PydanticToolsParser,
+)
 from langchain_core.prompts import ChatPromptTemplate, MessagesPlaceholder
 from langchain_openai import ChatOpenAI
 
-reflection_prompt = ChatPromptTemplate.from_messages(
+from schemas import AnswerQuestion, ReviseAnswer
+
+llm = ChatOpenAI(model="o4-mini")
+parser = JsonOutputToolsParser(return_id=True)
+parser_pydantic = PydanticToolsParser(tools=[AnswerQuestion])
+
+actor_prompt_template = ChatPromptTemplate.from_messages(
     [
         (
             "system",
-            (
-                "You are a reflective strategist distilling lessons learned. "
-                "Diagnose what worked, what stalled, and spotlight surprising signals."
-            ),
+            """You are expert researcher.
+Current time: {time}
+
+1. {first_instruction}
+2. Reflect and critique your answer. Be severe to maximize improvement.
+3. Recommend search queries to research information and improve your answer.""",
         ),
-        MessagesPlaceholder("conversation"),
-        (
-            "human",
-            (
-                "In three vivid bullet points, capture the breakthroughs, blind spots, "
-                "and unanswered curiosities that emerged while pursuing {objective}. "
-                "Close with a mantra titled 'North Star' that keeps the team aligned."
-            ),
-        ),
+        MessagesPlaceholder(variable_name="messages"),
+        ("system", "Answer the user's question above using the required format."),
     ]
+).partial(
+    time=lambda: datetime.datetime.now().isoformat(),
 )
 
-generation_prompt = ChatPromptTemplate.from_messages(
-    [
-        (
-            "system",
-            (
-                "You are a visionary builder turning reflection into momentum. Combine "
-                "insight with bold but practical next moves tailored to {audience}."
-            ),
-        ),
-        MessagesPlaceholder("reflections"),
-        MessagesPlaceholder("conversation"),
-        (
-            "human",
-            (
-                "Draft the next assistant message that advances {objective}. "
-                "Blend a {tone} tone with concrete, testable steps, and invite feedback "
-                "that keeps the loop learning."
-            ),
-        ),
-    ]
+
+first_responder_prompt_template = actor_prompt_template.partial(
+    first_instruction="Provide a detailed ~250 word answer."
 )
 
-# Ensure environment variables are available before the model initializes.
-load_dotenv()
+first_responder = first_responder_prompt_template | llm.bind_tools(
+    tools=[AnswerQuestion], tool_choice="AnswerQuestion"
+)
 
-llm = ChatOpenAI(model="gpt-4o-mini", temperature=0.3)
-# Parser ensures downstream graph logic receives plain text.
-_parser = StrOutputParser()
+revise_instructions = """Revise your previous answer using the new information.
+    - You should use the previous critique to add important information to your answer.
+        - You MUST include numerical citations in your revised answer to ensure it can be verified.
+        - Add a "References" section to the bottom of your answer (which does not count towards the word limit). In form of:
+            - [1] https://example.com
+            - [2] https://example.com
+    - You should use the previous critique to remove superfluous information from your answer and make SURE it is not more than 250 words.
+"""
 
-reflection_chain = reflection_prompt | llm | _parser
-generation_chain = generation_prompt | llm | _parser
+revisor = actor_prompt_template.partial(
+    first_instruction=revise_instructions
+) | llm.bind_tools(tools=[ReviseAnswer], tool_choice="ReviseAnswer")
 
-__all__ = [
-    "ChatPromptTemplate",
-    "MessagesPlaceholder",
-    "ChatOpenAI",
-    "reflection_prompt",
-    "generation_prompt",
-    "llm",
-    "reflection_chain",
-    "generation_chain",
-]
+
+if __name__ == "__main__":
+    human_message = HumanMessage(
+        content="Write about AI-Powered SOC / autonomous soc  problem domain,"
+        " list startups that do that and raised capital."
+    )
+    chain = (
+        first_responder_prompt_template
+        | llm.bind_tools(tools=[AnswerQuestion], tool_choice="AnswerQuestion")
+        | parser_pydantic
+    )
+
+    res = chain.invoke(input={"messages": [human_message]})
+    print(res)
