@@ -8,10 +8,13 @@ from langgraph.graph import END, START, StateGraph
 
 from chains import (
     continuation_chain,
-    first_responder_chain,
+    first_responder_model,
+    first_responder_parser,
     reflection_chain,
-    revision_chain,
+    revision_model,
+    revision_parser,
 )
+from tool_executor import execute_tools
 
 
 class AgentState(TypedDict):
@@ -24,6 +27,7 @@ class AgentState(TypedDict):
     structured_result: Dict[str, Any]
     reflections: List[Dict[str, Any]]
     tool_logs: List[str]
+    tool_results: List[Any]
     search_queries: List[str]
     decision: Optional[Dict[str, Any]]
     last_reflection_summary: Optional[Dict[str, Any]]
@@ -32,19 +36,21 @@ class AgentState(TypedDict):
 def draft(state: AgentState) -> AgentState:
     """Generate or revise the answer depending on the current iteration."""
 
-    chain = first_responder_chain if state["iteration"] == 0 else revision_chain
-    result = chain.invoke({"messages": state["messages"]})
+    is_initial_iteration = state["iteration"] == 0
+    model = first_responder_model if is_initial_iteration else revision_model
+    parser = first_responder_parser if is_initial_iteration else revision_parser
 
-    # PydanticToolsParser returns a list when multiple tool calls occur; grab the first.
-    if isinstance(result, list):
-        structured = result[0]
+    ai_message = model.invoke({"messages": state["messages"]})
+    parsed = parser.invoke(ai_message)
+
+    if isinstance(parsed, list):
+        structured = parsed[0]
     else:
-        structured = result
+        structured = parsed
 
     structured_dict = structured.model_dump()
-    answer = structured_dict["answer"]
 
-    messages = [*state["messages"], AIMessage(content=answer)]
+    messages = [*state["messages"], ai_message]
 
     return {
         **state,
@@ -52,33 +58,47 @@ def draft(state: AgentState) -> AgentState:
         "structured_result": structured_dict,
         "search_queries": structured_dict.get("search_queries", []),
         "tool_logs": [],
+        "tool_results": [],
     }
 
 
 def execute_research(state: AgentState) -> AgentState:
-    """Use the suggested search queries (stubbed for now) and log observations."""
+    """Run Tavily searches based on the model's suggested queries."""
+
+    previous_messages = state["messages"]
+    previous_count = len(previous_messages)
+    tool_output = execute_tools.invoke(previous_messages)
+
+    if isinstance(tool_output, list):
+        if previous_count <= len(tool_output) and tool_output[:previous_count] == list(previous_messages):
+            messages = tool_output
+            new_messages = tool_output[previous_count:]
+        else:
+            new_messages = tool_output
+            messages = [*previous_messages, *tool_output]
+    else:
+        new_messages = [tool_output]
+        messages = [*previous_messages, tool_output]
 
     observations: List[str] = []
+    results: List[Any] = []
 
-    if state["search_queries"]:
-        for idx, query in enumerate(state["search_queries"], start=1):
-            observations.append(
-                f"[stub] Iteration {state['iteration'] + 1}: planned search query {idx}: '{query}'."
-            )
-    else:
-        observations.append("No search queries proposed for this iteration.")
+    for message in new_messages:
+        content = message.content
+        results.append(content)
+        if isinstance(content, str):
+            observations.append(content)
+        else:
+            observations.append(str(content))
 
-    summary_text = "\n".join(observations)
-
-    messages = [
-        *state["messages"],
-        HumanMessage(content=f"Tool observations for next revision:\n{summary_text}"),
-    ]
+    if not observations:
+        observations.append("Search tools returned no content.")
 
     return {
         **state,
         "messages": messages,
         "tool_logs": observations,
+        "tool_results": results,
     }
 
 
@@ -196,8 +216,8 @@ def main() -> None:
     app = graph.compile()
 
     objective = (
-        "Write about the AI-powered SOC / autonomous SOC problem domain and list startups that "
-        "operate there with recent funding."
+        "Summarize a complex topic of your choice, highlighting current trends, notable players, "
+        "and open questions that deserve further investigation."
     )
 
     initial_state: AgentState = {
@@ -208,6 +228,7 @@ def main() -> None:
         "structured_result": {},
         "reflections": [],
         "tool_logs": [],
+    "tool_results": [],
         "search_queries": [],
         "decision": None,
         "last_reflection_summary": None,
@@ -221,6 +242,11 @@ def main() -> None:
 
     print("Final assistant answer:\n")
     print(final_answer)
+
+    if final_state.get("tool_logs"):
+        print("\nLatest tool observations:")
+        for observation in final_state["tool_logs"]:
+            print(f"- {observation}")
 
     if final_state.get("reflections"):
         print("\nReflection log:")

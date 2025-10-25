@@ -27,7 +27,7 @@ graph TD;
 
 1. **Objective ingestion** – User supplies a task through CLI (`main.py`) or Streamlit (`streamlit_app.py`).
 2. **Draft** – Agent creates/updates a structured answer (`AnswerQuestion` / `ReviseAnswer`).
-3. **Research (stubbed)** – Emits human-readable observations from suggested search queries; prepared for future tool integrations.
+3. **Research (tools)** – Executes a Tavily web search for each generated query via `tool_executor.py`, logs observations, and stores raw results for downstream reflection.
 4. **Reflect** – Summarizes strengths, risks, and next focus via `ReflectionSummary` schema.
 5. **Decide** – Evaluates confidence and iteration count via `ContinuationDecision` schema to determine another loop or finish.
 6. **Outputs** – Final answer, reflection history, and decision rendered in terminal and UI.
@@ -36,11 +36,11 @@ graph TD;
 
 | Layer | Files | Responsibilities |
 | --- | --- | --- |
-| **Prompts & Chains** | `chains.py` | Configures reusable `ChatPromptTemplate` pipelines for initial drafting, revision, reflection, and continuation decisions. Uses `langchain-openai` and structured output parsing. |
+| **Prompts & Chains** | `chains.py` | Configures reusable `ChatPromptTemplate` pipelines for initial drafting, revision, reflection, and continuation decisions. Exposes reusable LLM runnables and parsers to support tool execution with `langchain-openai` and structured output parsing. |
 | **Schemas** | `schemas.py` | Defines Pydantic models (`AnswerQuestion`, `ReviseAnswer`, `ReflectionSummary`, `ContinuationDecision`) to enforce consistent structure across iterations. |
-| **Workflow Orchestration** | `main.py` | Declares `AgentState` and builds a `StateGraph` with nodes `draft → research → reflect → decide`. Handles state mutation, loop logic, CLI execution, and Mermaid export. |
+| **Workflow Orchestration** | `main.py` | Declares `AgentState` and builds a `StateGraph` with nodes `draft → research → reflect → decide`. Handles state mutation, Tavily tool invocation, loop logic, CLI execution, and Mermaid export. |
 | **User Interface** | `streamlit_app.py` | Provides an interactive dashboard to run the agent, display the final answer, reflection log, continuation decision, Mermaid diagram, and debug conversation trace. |
-| **Environment & Tooling** | `pyproject.toml`, `poetry.lock`, `.env`, `.gitignore` | Manage dependencies, interpreter version, secrets, and Git hygiene. |
+| **Environment & Tooling** | `pyproject.toml`, `poetry.lock`, `.env`, `.gitignore` | Manage dependencies (LangChain, LangGraph, Tavily, Streamlit), interpreter version, secrets, and Git hygiene. |
 
 ## 4. State Management
 - `AgentState` tracks objective, conversation messages, iteration counters, structured outputs, reflections, tool logs, and continuation decisions.

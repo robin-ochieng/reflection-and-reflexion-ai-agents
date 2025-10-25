@@ -65,6 +65,7 @@ def _invoke_agent(objective: str, max_iterations: int) -> Dict:
         "structured_result": {},
         "reflections": [],
         "tool_logs": [],
+    "tool_results": [],
         "search_queries": [],
         "decision": None,
         "last_reflection_summary": None,
@@ -88,8 +89,8 @@ def main() -> None:
     _initialize_app()
 
     default_objective = (
-        "Write about the AI-powered SOC / autonomous SOC problem domain and list startups that "
-        "operate there with recent funding."
+        "Summarize a complex topic of your choice, highlighting current trends, notable players, "
+        "and open questions that deserve further investigation."
     )
 
     with st.form("agent_form"):
@@ -114,6 +115,14 @@ def main() -> None:
 
     st.subheader("Reflection Log")
     _render_reflections(state.get("reflections", []))
+
+    st.subheader("Latest Tool Observations")
+    tool_logs = state.get("tool_logs", [])
+    if tool_logs:
+        for item in tool_logs:
+            st.markdown(f"- {item}")
+    else:
+        st.write("No tool output recorded for the final iteration.")
 
     st.subheader("Continuation Decision")
     decision = state.get("decision", {})

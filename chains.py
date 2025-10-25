@@ -20,19 +20,19 @@ llm = ChatOpenAI(model="o4-mini")
 
 actor_prompt_template = ChatPromptTemplate.from_messages(
     [
-        (
-            "system",
-            """You are an expert researcher collaborating with a reflexion agent.
+    (
+        "system",
+        """You are an adaptable expert collaborator supporting a reflexion agent across any topic.
 Current time: {time}
 
 1. {first_instruction}
-2. Reflect critically on the draft by identifying what is missing or superfluous.
-3. Recommend concrete search queries that can improve the next iteration.""",
-        ),
+2. Reflect critically on the draft by identifying what is missing or superfluous for the stated objective.
+3. Recommend concrete search queries that can improve the next iteration regardless of subject area.""",
+    ),
         MessagesPlaceholder(variable_name="messages"),
         (
             "system",
-            "Always follow the requested output schema and be explicit about your reasoning.",
+            "Always follow the requested output schema and make your reasoning explicit for any domain.",
         ),
     ]
 ).partial(time=lambda: datetime.datetime.now().isoformat())
@@ -42,22 +42,20 @@ first_responder_prompt_template = actor_prompt_template.partial(
     first_instruction="Provide a detailed ~250 word answer."
 )
 
-first_responder_chain = (
-    first_responder_prompt_template
-    | llm.bind_tools(tools=[AnswerQuestion], tool_choice="AnswerQuestion")
-    | PydanticToolsParser(tools=[AnswerQuestion])
+first_responder_model = first_responder_prompt_template | llm.bind_tools(
+    tools=[AnswerQuestion], tool_choice="AnswerQuestion"
 )
+first_responder_parser = PydanticToolsParser(tools=[AnswerQuestion])
 
 revise_instructions = """Revise your previous answer using the new information.
 - Lean on your earlier critique to add essential information and remove fluff.
 - You MUST include numerical citations in square brackets inside the answer.
 - Append a "References" section (outside the word limit) listing the sources you relied on."""
 
-revision_chain = (
-    actor_prompt_template.partial(first_instruction=revise_instructions)
-    | llm.bind_tools(tools=[ReviseAnswer], tool_choice="ReviseAnswer")
-    | PydanticToolsParser(tools=[ReviseAnswer])
+revision_model = actor_prompt_template.partial(first_instruction=revise_instructions) | llm.bind_tools(
+    tools=[ReviseAnswer], tool_choice="ReviseAnswer"
 )
+revision_parser = PydanticToolsParser(tools=[ReviseAnswer])
 
 
 reflection_prompt = ChatPromptTemplate.from_messages(
@@ -125,8 +123,10 @@ continuation_chain = (
 
 __all__ = [
     "llm",
-    "first_responder_chain",
-    "revision_chain",
+    "first_responder_model",
+    "first_responder_parser",
+    "revision_model",
+    "revision_parser",
     "reflection_chain",
     "continuation_chain",
 ]
